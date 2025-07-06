@@ -829,7 +829,6 @@ input:checked + .slider:before {
 .dark .file-trash-btn:hover {
   background: var(--hover-dark);
 }
-
 .settings-gear-btn {
   background: none;
   border: none;

@@ -79,7 +79,7 @@ app.post('/upload/:chatId', upload.single('file'), (req, res) => {
   const chatId = req.params.chatId;
   const file = req.file;
   if (!file) return res.status(400).send('No file uploaded');
-  // Check that the chatId exists before saving the file
+  // Make sure the chat exists before saving the file
   db.get('SELECT id FROM chats WHERE id = ?', [chatId], (err, row) => {
     if (err) {
       console.error(err);
@@ -162,94 +162,149 @@ app.post('/api/ask', async (req, res) => {
   const { question, chatId } = req.body;
   if (!question) return res.status(400).json({ error: 'Question is required' });
   if (!dynamicOpenAIKey) return res.status(400).json({ error: 'OpenAI API key not set.' });
+
+  console.log("🔹 Question:", question);
+  console.log("🔹 Chat ID:", chatId);
+  console.log("🔹 Using OpenAI Key:", dynamicOpenAIKey);
+
   const openai = new OpenAI({ apiKey: dynamicOpenAIKey });
+  let messages = [];
+  let useVisionModel = false;
+  let context = '';
 
-  let context = "";
-  let messages = [{ role: 'user', content: question }];
-
-  // If a chatId is provided, try to find the most recent PDF or image for context
+  // Load previous chat messages
   if (chatId) {
     try {
-      const row = await new Promise((resolve, reject) => {
-        db.get('SELECT filepath, mimetype FROM pdfs WHERE chat_id = ? ORDER BY uploaded_at DESC LIMIT 1', [chatId], (err, row) => {
+      const chatRow = await new Promise((resolve, reject) => {
+        db.get('SELECT messages FROM chats WHERE id = ?', [chatId], (err, row) => {
           if (err) reject(err);
-          resolve(row);
+          else resolve(row);
         });
       });
 
-      if (row && row.filepath && fs.existsSync(row.filepath)) {
-        // If the file is a PDF, extract its text and use it as context for the question
-        if (row.mimetype === 'application/pdf') {
-          const dataBuffer = fs.readFileSync(row.filepath);
-          const pdfData = await pdf(dataBuffer);
-          context = `Based on the following document content, please answer the user's question. Document content: """${pdfData.text.substring(0, 4000)}"""\n\n`;
-          messages = [{ role: 'user', content: `${context}Question: ${question}` }];
-        }
-        // If the file is an image, encode it as base64 and send to the vision model
-        else if (row.mimetype.startsWith('image/')) {
-          const dataBuffer = fs.readFileSync(row.filepath);
-          const base64Image = dataBuffer.toString('base64');
-          messages = [
-            {
-              role: 'user',
-              content: [
-                { type: 'text', text: question },
-                {
-                  type: 'image_url',
-                  image_url: { url: `data:${row.mimetype};base64,${base64Image}` },
-                },
-              ],
-            },
-          ];
+      if (chatRow?.messages) {
+        const previousMessages = JSON.parse(chatRow.messages);
+        if (Array.isArray(previousMessages)) {
+          messages = [...previousMessages];
         }
       }
     } catch (err) {
-      console.error(err);
-      // If an error occurs, continue without context
+      // console.error("❌ Failed to load previous messages:", err);
     }
   }
 
+  // Determine if the question is document-related
+  const isPDFRelated = /summarize|explain|according to|in the pdf|based on the document|tools used|abstract|what does it say|methods used/i.test(question);
+
+  // Try to get file context if needed
+  if (chatId && isPDFRelated) {
+    try {
+      const fileRow = await new Promise((resolve, reject) => {
+        db.get(
+          'SELECT filepath, mimetype FROM pdfs WHERE chat_id = ? ORDER BY uploaded_at DESC LIMIT 1',
+          [chatId],
+          (err, row) => (err ? reject(err) : resolve(row))
+        );
+      });
+
+      if (fileRow && fileRow.filepath && fs.existsSync(fileRow.filepath)) {
+        const dataBuffer = fs.readFileSync(fileRow.filepath);
+
+        if (fileRow.mimetype === 'application/pdf') {
+          const pdfData = await pdf(dataBuffer);
+          // console.log("📄 Extracted PDF text length:", pdfData.text.length);
+          context = `The following document has been uploaded for reference:\n\n"""${pdfData.text.substring(0, 3000)}"""\n\n`;
+        } else if (fileRow.mimetype.startsWith('image/')) {
+          const base64Image = dataBuffer.toString('base64');
+          messages.push({
+            role: 'user',
+            content: [
+              { type: 'text', text: question },
+              {
+                type: 'image_url',
+                image_url: { url: `data:${fileRow.mimetype};base64,${base64Image}` },
+              },
+            ],
+          });
+          useVisionModel = true;
+        }
+      }
+    } catch (err) {
+      // console.error("❌ Error extracting file context:", err);
+    }
+  }
+
+  // Inject system context and user message
+  if (!useVisionModel) {
+    if (context) {
+      messages.unshift({ role: 'system', content: context });
+    }
+    messages.push({ role: 'user', content: question });
+  }
+
+  // Clean up the message list to make sure it's valid
+  messages = messages.filter(
+    (m) =>
+      m &&
+      typeof m === 'object' &&
+      ['user', 'assistant', 'system'].includes(m.role) &&
+      (typeof m.content === 'string' || Array.isArray(m.content))
+  );
+
+  // Log the final messages we're sending to OpenAI
+  // console.log("🧹 Final messages sent to OpenAI:");
+  // console.dir(messages, { depth: null });
+
+  // Send to OpenAI
   let answer = '';
   try {
-    if (messages[0].content instanceof Array || (messages[0].content && messages[0].content[0]?.type === 'text')) {
-      // Use the vision model for images
-      const completion = await openai.chat.completions.create({
-        model: 'gpt-4-vision-preview',
-        messages,
-        max_tokens: 512,
-      });
-      answer = completion.choices[0].message.content;
-    } else {
-      // Use the text model for regular questions or PDFs
-      const completion = await openai.chat.completions.create({
-        model: 'gpt-3.5-turbo',
-        messages,
-        max_tokens: 512,
-      });
-      answer = completion.choices[0].message.content;
-    }
+    const completion = await openai.chat.completions.create({
+      model: useVisionModel ? 'gpt-4-vision-preview' : 'gpt-3.5-turbo',
+      messages,
+      max_tokens: 512,
+    });
 
-    // Request follow-up questions from OpenAI based on the previous answer
+    answer = completion.choices?.[0]?.message?.content || "OpenAI returned an empty response.";
+    messages.push({ role: 'assistant', content: answer });
+  } catch (err) {
+    // console.error("❌ OpenAI Completion Error:", err.response?.data || err.message || err);
+    return res.status(500).json({ error: 'Failed to get answer from OpenAI.' });
+  }
+
+  // Save updated messages to database
+  if (chatId) {
+    db.run(
+      `UPDATE chats SET messages = ? WHERE id = ?`,
+      [JSON.stringify(messages), chatId],
+      (err) => {
+        if (err) console.error("❌ Failed to save messages:", err);
+      }
+    );
+  }
+
+  // Generate follow-up questions
+  let followups = [];
+  try {
     const followupPrompt = `Based on the previous answer, suggest 3 relevant follow-up questions a user might ask next. Respond with each question on a new line, no numbering or extra text.`;
+
     const followupCompletion = await openai.chat.completions.create({
       model: 'gpt-3.5-turbo',
       messages: [
         ...messages,
-        { role: 'assistant', content: answer },
         { role: 'user', content: followupPrompt }
       ],
       max_tokens: 100,
     });
-    const followups = followupCompletion.choices[0].message.content
-      .split('\n')
-      .map(q => q.trim())
-      .filter(q => q.length > 0);
 
-    res.json({ answer, followups });
+    followups = followupCompletion.choices?.[0]?.message?.content
+      ?.split('\n')
+      .map(q => q.trim())
+      .filter(q => q.length > 0) || [];
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Failed to get answer from OpenAI.' });
+    console.error("⚠️ Follow-up question generation failed:", err.response?.data || err.message || err);
   }
+
+  res.json({ answer, followups });
 });
 
 // Delete a file from disk and database

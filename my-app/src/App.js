@@ -30,7 +30,7 @@ function App() {
 
   const activeChat = activeChatIndex !== null ? chats[activeChatIndex] : null;
 
-  // Close the chat menu if the user clicks outside of it
+  // Close the chat menu when user clicks outside of it
   const menuRef = React.useRef();
   useEffect(() => {
     if (menuOpenIndex === null) return;
@@ -144,7 +144,7 @@ function App() {
     setInput("");
   };
 
-  // Helper function to get an answer from OpenAI and update the assistant's reply in the chat
+  // Get an answer from OpenAI and update the assistant's reply in the chat
   const fetchOpenAIAnswer = async (question, chatId, assistantMsgIndex) => {
     try {
       const res = await fetch("http://localhost:5000/api/ask", {

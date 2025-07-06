@@ -6,6 +6,7 @@ const db = new sqlite3.Database(path.join(__dirname, 'files.db'));
 db.run('PRAGMA foreign_keys = ON');
 
 db.serialize(() => {
+  // Create the chats table
   db.run(`
     CREATE TABLE IF NOT EXISTS chats (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -14,32 +15,66 @@ db.serialize(() => {
     )
   `);
 
-  // Create the pdfs table without the new column first, so it works with existing databases
-  db.run(`
-    CREATE TABLE IF NOT EXISTS pdfs (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      chat_id INTEGER,
-      filename TEXT,
-      filepath TEXT,
-      uploaded_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (chat_id) REFERENCES chats(id)
-    )
-  `);
-
-  db.all("PRAGMA table_info(pdfs)", (err, columns) => {
+  // Check if the pdfs table already exists
+  db.get(`SELECT name FROM sqlite_master WHERE type='table' AND name='pdfs'`, (err, row) => {
     if (err) {
-        console.error("Failed to read 'pdfs' table info:", err);
-        return;
+      console.error("Failed to check for 'pdfs' table:", err);
+      return;
     }
-    const hasMimetype = columns.some(col => col.name === 'mimetype');
-    if (!hasMimetype) {
-        db.run("ALTER TABLE pdfs ADD COLUMN mimetype TEXT", (alterErr) => {
-            if (alterErr) {
-                console.error("Failed to add 'mimetype' column:", alterErr);
-            } else {
-                console.log("Database updated successfully with 'mimetype' column.");
-            }
-        });
+
+    if (row) {
+      // The pdfs table exists, let's check if it has the right foreign key setup
+      db.all("PRAGMA foreign_key_list(pdfs)", (fkErr, fkRows) => {
+        if (fkErr) {
+          console.error("Failed to inspect foreign keys:", fkErr);
+          return;
+        }
+
+        const hasCascade = fkRows.some(row => row.on_delete.toUpperCase() === 'CASCADE');
+        if (!hasCascade) {
+          console.log("Migrating 'pdfs' table to support ON DELETE CASCADE...");
+
+          db.serialize(() => {
+            db.run(`
+              CREATE TABLE IF NOT EXISTS pdfs_temp (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id INTEGER,
+                filename TEXT,
+                filepath TEXT,
+                uploaded_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                mimetype TEXT,
+                FOREIGN KEY (chat_id) REFERENCES chats(id) ON DELETE CASCADE
+              )
+            `);
+
+            db.run(`
+              INSERT INTO pdfs_temp (id, chat_id, filename, filepath, uploaded_at, mimetype)
+              SELECT id, chat_id, filename, filepath, uploaded_at, mimetype FROM pdfs
+            `);
+
+            db.run(`DROP TABLE pdfs`);
+            db.run(`ALTER TABLE pdfs_temp RENAME TO pdfs`);
+
+            console.log("Migration completed: 'pdfs' now uses ON DELETE CASCADE.");
+          });
+        } else {
+          console.log("'pdfs' table already has ON DELETE CASCADE.");
+        }
+      });
+    } else {
+      // Create the pdfs table with ON DELETE CASCADE
+      db.run(`
+        CREATE TABLE pdfs (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          chat_id INTEGER,
+          filename TEXT,
+          filepath TEXT,
+          uploaded_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          mimetype TEXT,
+          FOREIGN KEY (chat_id) REFERENCES chats(id) ON DELETE CASCADE
+        )
+      `);
+      console.log("'pdfs' table created with ON DELETE CASCADE.");
     }
   });
 });
