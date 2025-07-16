@@ -23,8 +23,9 @@
 }
 
 body {
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-  line-height: 1.5;
+  font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+  font-size: 0.98rem;
+  line-height: 1.65;
   color: var(--text-light);
   background: var(--background-light);
 }
@@ -42,43 +43,200 @@ body {
   overflow: hidden;
 }
 
-/* Sidebar Styling */
+/* Modern Sidebar UI */
 .sidebar {
   background: var(--sidebar-light);
   border-right: 1px solid var(--border-light);
-  padding: 1.5rem;
+  padding: 2rem 1.5rem 1.5rem 1.5rem;
   display: flex;
   flex-direction: column;
-  gap: 1rem;
+  gap: 1.5rem;
   overflow-y: auto;
+  min-width: 270px;
+  box-shadow: 2px 0 16px 0 rgba(30,41,59,0.04);
+  font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+  font-size: 0.98rem;
+  letter-spacing: 0.01em;
 }
 
 .dark .sidebar {
   background: var(--sidebar-dark);
   border-right-color: var(--border-dark);
+  box-shadow: 2px 0 16px 0 rgba(30,41,59,0.12);
 }
 
 .sidebar h2 {
-  font-size: 1.5rem;
-  font-weight: 600;
-  color: var(--primary-color);
-  margin-bottom: 1rem;
+  font-size: 1.25rem;
+  font-weight: 700;
+  margin-bottom: 1.1rem;
 }
 
 .new-chat-button {
-  background: var(--primary-color);
+  background: linear-gradient(90deg, #2563eb 0%, #4f46e5 100%);
   color: white;
   border: none;
-  padding: 0.75rem 1rem;
-  border-radius: 0.5rem;
-  font-weight: 500;
+  padding: 0.7rem 0;
+  border-radius: 0.9rem;
+  font-weight: 600;
+  font-size: 1rem;
   cursor: pointer;
-  transition: background-color 0.2s;
+  transition: background 0.2s, box-shadow 0.2s;
   width: 100%;
+  box-shadow: 0 2px 8px 0 rgba(37,99,235,0.06);
+  margin-bottom: 1.2rem;
 }
 
 .new-chat-button:hover {
-  background: var(--secondary-color);
+  background: linear-gradient(90deg, #4f46e5 0%, #2563eb 100%);
+  box-shadow: 0 4px 16px 0 rgba(37,99,235,0.12);
+}
+
+.folder-list {
+  margin-bottom: 1.5rem;
+}
+
+.folder-item {
+  margin-bottom: 0.5rem;
+}
+
+.folder-item > div {
+  padding: 0.48rem 0.7rem;
+  border-radius: 0.6rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: 500;
+  font-size: 0.99rem;
+  background: transparent;
+  transition: background 0.16s, color 0.16s;
+  margin-bottom: 0.05rem;
+}
+.folder-item > div:hover, .folder-item > div:focus-within {
+  background: #f6f7fa;
+  color: #2563eb;
+}
+.dark .folder-item > div:hover, .dark .folder-item > div:focus-within {
+  background: #232a3b;
+  color: #a5b4fc;
+}
+
+.folder-item > div.active {
+  background: #e7eafc;
+  color: #2563eb;
+  font-weight: 600;
+}
+.dark .folder-item > div.active {
+  background: #232a3b;
+  color: #a5b4fc;
+}
+
+.chat-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin-bottom: 0.5rem;
+}
+
+.chat-history-item {
+  padding: 0.75rem 1rem;
+  border-radius: 0.5rem;
+  cursor: pointer;
+  transition: background 0.18s, color 0.18s;
+  position: relative;
+  border: 1px solid transparent;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 1em;
+  font-weight: 600;
+  background: transparent;
+  font-size: 0.99rem;
+  font-weight: 500;
+  padding: 0.48rem 0.7rem;
+  border-radius: 0.6rem;
+  margin-bottom: 0.05rem;
+}
+.chat-history-item:hover {
+  background: #f1f5ff;
+  color: #2563eb;
+}
+.dark .chat-history-item:hover {
+  background: #232a3b;
+  color: #a5b4fc;
+}
+.chat-history-item.active {
+  background: #e7eafc;
+  color: #2563eb;
+  font-weight: 600;
+}
+.dark .chat-history-item.active {
+  background: #232a3b;
+  color: #a5b4fc;
+}
+
+.chat-title {
+  font-size: 0.99rem;
+  font-weight: 500;
+  color: inherit;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Modern icon buttons */
+.folder-item button, .chat-history-item button {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #8a94a6;
+  font-size: 1em;
+  padding: 2px 5px;
+  border-radius: 5px;
+  transition: background 0.15s, color 0.15s;
+  margin-left: 0.12rem;
+}
+.folder-item button:hover, .chat-history-item button:hover {
+  background: #e7eafc;
+  color: #2563eb;
+}
+.dark .folder-item button:hover, .dark .chat-history-item button:hover {
+  background: #232a3b;
+  color: #a5b4fc;
+}
+
+/* Select All row */
+.chat-list > div:first-child input[type="checkbox"] {
+  accent-color: var(--primary-color);
+  margin-right: 0.5rem;
+}
+
+/* Section headers */
+.sidebar > div[style*='font-weight: 600'] {
+  font-size: 1em;
+  font-weight: 600;
+  color: #334155;
+  margin-bottom: 0.6rem;
+  margin-top: 0.6rem;
+  letter-spacing: 0.01em;
+}
+.dark .sidebar > div[style*='font-weight: 600'] {
+  color: #cbd5e1;
+}
+
+/* Section divider */
+.sidebar-divider {
+  border: none;
+  border-top: 1px solid #e5e7eb;
+  margin: 1.1rem 0 1.1rem 0;
+}
+.dark .sidebar-divider {
+  border-top: 1px solid #374151;
+}
+
+/* Hide scroll bar for sidebar */
+.sidebar::-webkit-scrollbar {
+  width: 0;
+  background: transparent;
 }
 
 /* Chat List */
@@ -848,4 +1006,144 @@ input:checked + .slider:before {
 }
 .dark .settings-gear-btn:hover {
   background: var(--hover-dark);
+}
+
+/* Indent chats under folders */
+.folder-item .chat-list .chat-history-item {
+  margin-left: 1.1rem;
+  font-weight: 400;
+  font-size: 0.97rem;
+}
+
+/* --- Sidebar Chat Item Professional Styling --- */
+.chat-history-item {
+  padding: 1rem 1.2rem;
+  border-radius: 0.8rem;
+  margin-bottom: 0.7rem;
+  background: transparent;
+  transition: background 0.18s, color 0.18s, box-shadow 0.18s;
+  box-shadow: none;
+  border: 1.5px solid transparent;
+  display: flex;
+  align-items: flex-start;
+  min-height: 56px;
+}
+.chat-history-item.active {
+  background: #2563eb;
+  color: #fff;
+  box-shadow: 0 2px 12px 0 rgba(37,99,235,0.08);
+  border-color: #2563eb;
+}
+
+.chat-title {
+  font-size: 1.08em;
+  font-weight: 700;
+  margin-bottom: 0.2em;
+  color: inherit;
+  letter-spacing: 0.01em;
+  display: block;
+  line-height: 1.2;
+}
+
+/* File List Styling under Chat */
+.sidebar-file-list {
+  width: 100%;
+  margin: 0.2em 0 0 0;
+  padding: 0;
+  list-style: none;
+}
+.sidebar-file-list li {
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+  font-size: 0.97em;
+  color: #334155;
+  background: none;
+  border-radius: 0.4em;
+  padding: 0.18em 0.2em 0.18em 0.1em;
+  margin-bottom: 2px;
+  transition: background 0.15s;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.chat-history-item.active .sidebar-file-list li {
+  color: #e0e7ff;
+}
+.sidebar-file-link {
+  color: inherit;
+  text-decoration: none;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 0.96em;
+  transition: color 0.18s;
+}
+.sidebar-file-link:hover {
+  color: #2563eb;
+  text-decoration: underline;
+}
+.file-trash-btn {
+  background: none;
+  border: none;
+  color: #b0b0b0;
+  font-size: 1em;
+  cursor: pointer;
+  padding: 0 0.2em;
+  border-radius: 4px;
+  transition: color 0.18s, background 0.18s;
+  display: flex;
+  align-items: center;
+}
+.file-trash-btn:hover {
+  color: #ef4444;
+  background: #f3f4f6;
+}
+.chat-history-item.active .file-trash-btn:hover {
+  background: #1e293b;
+  color: #fff;
+}
+
+/* Spacing for chat title and icons */
+.chat-title + button, .chat-title + button + button {
+  margin-left: 0.25em;
+}
+
+/* Responsive ellipsis for file names */
+.sidebar-file-list li, .sidebar-file-link {
+  max-width: 170px;
+}
+
+@media (max-width: 400px) {
+  .sidebar-file-list li, .sidebar-file-link {
+    max-width: 90px;
+  }
+}
+
+/* Center-align sidebar file list and bullets */
+.sidebar-file-list {
+  width: 100%;
+  margin: 0.2em 0 0 0;
+  padding: 0;
+  list-style: disc;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.sidebar-file-list li {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-bottom: 2px;
+  position: relative;
+  width: fit-content;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.97em;
+  color: #334155;
+  background: none;
+  border-radius: 0.4em;
+  padding: 0.18em 0.2em 0.18em 0.1em;
+  transition: background 0.15s;
 }

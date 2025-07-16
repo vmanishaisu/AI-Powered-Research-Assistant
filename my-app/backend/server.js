@@ -46,16 +46,20 @@ app.get('/chats', (req, res) => {
   });
 });
 
-// Create a new chat with a title and empty messages
+// Create a new chat with a title, optional folder_id, and empty messages
 app.post('/chats', (req, res) => {
-  const { title } = req.body;
-  db.run(`INSERT INTO chats (title, messages) VALUES (?, ?)`, [title || 'Untitled', '[]'], function (err) {
-    if (err) {
-      console.error(err);
-      return res.status(500).send('Failed to create chat');
+  const { title, folder_id } = req.body;
+  db.run(
+    `INSERT INTO chats (title, folder_id, messages) VALUES (?, ?, ?)`,
+    [title || 'Untitled', folder_id || null, '[]'],
+    function (err) {
+      if (err) {
+        console.error(err);
+        return res.status(500).send('Failed to create chat');
+      }
+      res.json({ id: this.lastID, title: title || 'Untitled', folder_id: folder_id || null, messages: [] });
     }
-    res.json({ id: this.lastID, title: title || 'Untitled', messages: [] });
-  });
+  );
 });
 
 // Save the messages array for a specific chat
@@ -307,6 +311,23 @@ app.post('/api/ask', async (req, res) => {
   res.json({ answer, followups });
 });
 
+// Serve a file by ID
+app.get('/files/:fileId', (req, res) => {
+  const { fileId } = req.params;
+  db.get('SELECT filepath, mimetype, filename FROM pdfs WHERE id = ?', [fileId], (err, row) => {
+    if (err) {
+      console.error(err);
+      return res.status(500).send('Database error');
+    }
+    if (!row) return res.status(404).send('File not found');
+    if (!fs.existsSync(row.filepath)) return res.status(404).send('File not found on disk');
+    
+    res.setHeader('Content-Type', row.mimetype);
+    res.setHeader('Content-Disposition', `inline; filename="${row.filename}"`);
+    res.sendFile(row.filepath);
+  });
+});
+
 // Delete a file from disk and database
 app.delete('/files/:fileId', (req, res) => {
   const { fileId } = req.params;
@@ -330,6 +351,91 @@ app.delete('/files/:fileId', (req, res) => {
       }
       res.sendStatus(200);
     });
+  });
+});
+
+// FOLDER ENDPOINTS
+// List all folders
+app.get('/folders', (req, res) => {
+  db.all('SELECT * FROM folders ORDER BY id DESC', (err, rows) => {
+    if (err) return res.status(500).send('Database error');
+    res.json(rows);
+  });
+});
+// Create a new folder
+app.post('/folders', (req, res) => {
+  const { name } = req.body;
+  if (!name) return res.status(400).send('Folder name required');
+  db.run('INSERT INTO folders (name) VALUES (?)', [name], function (err) {
+    if (err) return res.status(500).send('Database error');
+    res.json({ id: this.lastID, name });
+  });
+});
+// Rename a folder
+app.put('/folders/:folderId', (req, res) => {
+  const { folderId } = req.params;
+  const { name } = req.body;
+  if (!name) return res.status(400).send('Folder name required');
+  db.run('UPDATE folders SET name = ? WHERE id = ?', [name, folderId], function (err) {
+    if (err) return res.status(500).send('Database error');
+    res.sendStatus(200);
+  });
+});
+// Delete a folder and all its chats and PDFs
+app.delete('/folders/:folderId', (req, res) => {
+  const { folderId } = req.params;
+  // First, delete all PDFs for chats in this folder
+  db.all('SELECT id FROM chats WHERE folder_id = ?', [folderId], (err, chats) => {
+    if (err) return res.status(500).send('Database error');
+    const chatIds = chats.map(c => c.id);
+    if (chatIds.length > 0) {
+      db.run(`DELETE FROM pdfs WHERE chat_id IN (${chatIds.map(() => '?').join(',')})`, chatIds, function (err2) {
+        if (err2) return res.status(500).send('Database error');
+        // Now delete the chats
+        db.run('DELETE FROM chats WHERE folder_id = ?', [folderId], function (err3) {
+          if (err3) return res.status(500).send('Database error');
+          // Finally, delete the folder
+          db.run('DELETE FROM folders WHERE id = ?', [folderId], function (err4) {
+            if (err4) return res.status(500).send('Database error');
+            res.sendStatus(200);
+          });
+        });
+      });
+    } else {
+      // No chats, just delete the folder
+      db.run('DELETE FROM folders WHERE id = ?', [folderId], function (err4) {
+        if (err4) return res.status(500).send('Database error');
+        res.sendStatus(200);
+      });
+    }
+  });
+});
+// Get chats by folder
+app.get('/folders/:folderId/chats', (req, res) => {
+  const { folderId } = req.params;
+  db.all('SELECT * FROM chats WHERE folder_id = ? ORDER BY id DESC', [folderId], (err, rows) => {
+    if (err) return res.status(500).send('Database error');
+    // Parse messages for each chat
+    const parsedRows = rows.map(row => {
+      let messages = [];
+      try {
+        messages = row.messages ? JSON.parse(row.messages) : [];
+        if (!Array.isArray(messages)) messages = [];
+      } catch {
+        messages = [];
+      }
+      return { ...row, messages };
+    });
+    res.json(parsedRows);
+  });
+});
+// Move a chat to a folder
+app.put('/chats/:chatId/folder', (req, res) => {
+  const { chatId } = req.params;
+  const { folder_id } = req.body;
+  db.run('UPDATE chats SET folder_id = ? WHERE id = ?', [folder_id, chatId], function (err) {
+    if (err) return res.status(500).send('Database error');
+    res.sendStatus(200);
   });
 });
 

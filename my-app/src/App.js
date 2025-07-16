@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import "./App.css";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { faPaperclip, faTrash, faGear } from "@fortawesome/free-solid-svg-icons";
+import { faPaperclip, faGear, faFolder, faPlus, faEdit, faTrash as faTrashAlt, faChevronDown, faChevronRight } from "@fortawesome/free-solid-svg-icons";
 
 function App() {
   const [chats, setChats] = useState([]);
@@ -10,13 +10,12 @@ function App() {
   const [uploadMessage, setUploadMessage] = useState("");
   const [darkMode, setDarkMode] = useState(false);
   const [menuOpenIndex, setMenuOpenIndex] = useState(null);
-  const [chatsLoading, setChatsLoading] = useState(false);
   const [error, setError] = useState("");
   const [showRenameModal, setShowRenameModal] = useState(false);
   const [renameValue, setRenameValue] = useState("");
-  const [renameTargetIndex, setRenameTargetIndex] = useState(null);
+  const [renameTargetId, setRenameTargetId] = useState(null);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
-  const [deleteTargetIndex, setDeleteTargetIndex] = useState(null);
+  const [deleteTargetId, setDeleteTargetId] = useState(null);
   const [pdfsByChat, setPdfsByChat] = useState({});
   const [editingMessageIndex, setEditingMessageIndex] = useState(null);
   const [editValue, setEditValue] = useState("");
@@ -27,6 +26,20 @@ function App() {
   const [apiKeyInput, setApiKeyInput] = useState("");
   const [apiKeyStatus, setApiKeyStatus] = useState("");
   const [followups, setFollowups] = useState([]);
+  const [folders, setFolders] = useState([]);
+  const [selectedFolderId, setSelectedFolderId] = useState(null);
+  const [showFolderModal, setShowFolderModal] = useState(false);
+  const [folderModalType, setFolderModalType] = useState("create"); // "create" or "rename"
+  const [folderModalValue, setFolderModalValue] = useState("");
+  const [folderModalTargetId, setFolderModalTargetId] = useState(null);
+  const [folderCollapse, setFolderCollapse] = useState({});
+  // 1. Add a new state for allChats:
+  const [allChats, setAllChats] = useState([]);
+  const [activeChatId, setActiveChatId] = useState(null);
+  const [pendingActivateChatId, setPendingActivateChatId] = useState(null);
+  // Add state for folder delete modal
+  const [showDeleteFolderModal, setShowDeleteFolderModal] = useState(false);
+  const [deleteFolderTargetId, setDeleteFolderTargetId] = useState(null);
 
   const activeChat = activeChatIndex !== null ? chats[activeChatIndex] : null;
 
@@ -47,31 +60,39 @@ function App() {
     document.documentElement.classList.toggle("dark", darkMode);
   }, [darkMode]);
 
+  // Fetch folders and chats
   useEffect(() => {
-    fetchChats();
+    fetchFolders();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  useEffect(() => {
-    if (activeChatIndex !== null && (activeChatIndex < 0 || activeChatIndex >= chats.length)) {
-      setActiveChatIndex(null);
+  const fetchFolders = async () => {
+    try {
+      const res = await fetch("http://localhost:5000/folders");
+      if (!res.ok) throw new Error("Failed to load folders");
+      const data = await res.json();
+      setFolders(data);
+      // Optionally select the first folder by default
+      if (data.length > 0 && selectedFolderId === null) setSelectedFolderId(data[0].id);
+    } catch (err) {
+      setError("Failed to load folders");
     }
-  }, [chats, activeChatIndex]);
+    fetchChats(); // Also fetch all chats for uncategorized
+  };
 
-  useEffect(() => {
-    if (!activeChat || !Array.isArray(activeChat.messages) || activeChat.messages.length === 0) {
-      setFollowups([]);
-    }
-  }, [activeChat]);
-
-  const fetchChats = async () => {
-    setChatsLoading(true);
+  const fetchChats = useCallback(async () => {
     setError("");
     try {
       const res = await fetch("http://localhost:5000/chats");
       if (!res.ok) throw new Error("Failed to load chats");
       const data = await res.json();
-      setChats(data);
-
+      setAllChats(data);
+      // If a folder is selected, filter chats for that folder; otherwise, show all uncategorized chats
+      if (selectedFolderId) {
+        setChats(data.filter(chat => chat.folder_id === selectedFolderId));
+      } else {
+        setChats(data.filter(chat => !chat.folder_id));
+      }
       // Download the list of PDFs for every chat and store them in state
       const pdfsMap = {};
       await Promise.all(
@@ -89,9 +110,31 @@ function App() {
     } catch (err) {
       setError("Failed to load chats");
     } finally {
-      setChatsLoading(false);
+      
     }
-  };
+  }, [selectedFolderId]);
+
+  useEffect(() => {
+    
+    // Check against allChats to ensure the chat exists, regardless of current folder filter
+    if (pendingActivateChatId && allChats.some(c => c.id === pendingActivateChatId)) {
+      setActiveChatId(pendingActivateChatId);
+      setPendingActivateChatId(null);
+    }
+    // Whenever chats or activeChatId changes, update activeChatIndex
+    if (activeChatId) {
+      const idx = chats.findIndex(c => c.id === activeChatId);
+      setActiveChatIndex(idx !== -1 ? idx : null);
+    } else {
+      setActiveChatIndex(null);
+    }
+  }, [chats, activeChatId, pendingActivateChatId, allChats]);
+
+  useEffect(() => {
+    if (!activeChat || !Array.isArray(activeChat.messages) || activeChat.messages.length === 0) {
+      setFollowups([]);
+    }
+  }, [activeChat]);
 
   const toggleDarkMode = () => {
     setDarkMode((prev) => !prev);
@@ -197,6 +240,7 @@ function App() {
     }
   };
 
+  // --- CHAT CRUD ---
   const handleNewChat = async () => {
     try {
       const res = await fetch("http://localhost:5000/chats", {
@@ -205,12 +249,7 @@ function App() {
         body: JSON.stringify({ title: "Untitled" }),
       });
       if (!res.ok) throw new Error("Failed to create chat");
-      const newChat = await res.json();
-      setChats((prev) => {
-        const newChats = [...prev, newChat];
-        setActiveChatIndex(newChats.length - 1);
-        return newChats;
-      });
+      await fetchChats();
       setInput("");
       setFollowups([]);
     } catch (err) {
@@ -218,84 +257,15 @@ function App() {
     }
   };
 
-  const handleFileChange = async (e) => {
-    const file = e.target.files[0];
-    if (!file || !activeChat) {
-      setUploadMessage(file ? "❌ Please select a chat first." : "");
-      return;
-    }
-
-    setUploadMessage("Uploading...");
-    setError("");
-
-    const formData = new FormData();
-    formData.append("file", file);
-
+  const handleDeleteChat = async () => {
+    if (!deleteTargetId) return;
     try {
-      //  Upload the file
-      const res = await fetch(`http://localhost:5000/upload/${activeChat.id}`, {
-        method: "POST",
-        body: formData,
-      });
-      if (!res.ok) throw new Error("Upload failed");
-      const uploadedFile = await res.json();
-      setUploadMessage(""); // Clear "Uploading..." message on success
-
-      //  Create a file message
-      const fileMessage = {
-        role: 'file',
-        content: {
-          name: uploadedFile.filename,
-          type: file.type,
-        }
-      };
-
-      // Add the new file message to the chat's messages without mutating state
-      const updatedChats = chats.map((chat, index) => {
-        if (index === activeChatIndex) {
-          const updatedMessages = [...(chat.messages || []), fileMessage];
-          return { ...chat, messages: updatedMessages };
-        }
-        return chat;
-      });
-      
-      // Update the chat state and then save the new messages to the backend
-      setChats(updatedChats);
-      const updatedChat = updatedChats[activeChatIndex];
-      if (updatedChat) {
-        await saveMessages(updatedChat.id, updatedChat.messages);
-      }
-
-      // 5. Refresh sidebar PDF list
-      const resPdfs = await fetch(`http://localhost:5000/chats/${activeChat.id}/pdfs`);
-      if (resPdfs.ok) {
-        const pdfs = await resPdfs.json();
-        setPdfsByChat(prev => ({ ...prev, [activeChat.id]: pdfs }));
-      }
-    } catch (err) {
-      console.error(err); 
-      setUploadMessage("❌ Upload failed. Please try again.");
-    } finally {
-      // Reset the file input so the same file can be uploaded again
-      e.target.value = null;
-    }
-  };
-
-  // Delete chat and update the UI
-  const handleDeleteChat = async (index) => {
-    const chat = chats[index];
-    if (!chat) return;
-    try {
-      const res = await fetch(`http://localhost:5000/chats/${chat.id}`, {
+      const res = await fetch(`http://localhost:5000/chats/${deleteTargetId}`, {
         method: "DELETE",
       });
       if (!res.ok) throw new Error("Failed to delete chat");
-      setChats((prev) => prev.filter((_, i) => i !== index));
-      setActiveChatIndex((prev) => {
-        if (prev === index) return null;
-        if (prev > index) return prev - 1;
-        return prev;
-      });
+      await fetchChats();
+      setActiveChatIndex(null);
       setMenuOpenIndex(null);
       setShowDeleteModal(false);
     } catch (err) {
@@ -303,10 +273,15 @@ function App() {
     }
   };
 
-  // Rename a chat and update the UI
   const handleRenameChat = async () => {
-    if (renameTargetIndex === null || !renameValue.trim()) return;
-    const chat = chats[renameTargetIndex];
+    if (!renameTargetId || !renameValue.trim()) {
+      return;
+    }
+    const chat = allChats.find(c => c.id === renameTargetId);
+    if (!chat) {
+      setError("Chat not found");
+      return;
+    }
     try {
       const res = await fetch(`http://localhost:5000/chats/${chat.id}`, {
         method: "PUT",
@@ -314,7 +289,7 @@ function App() {
         body: JSON.stringify({ title: renameValue.trim() }),
       });
       if (!res.ok) throw new Error("Failed to rename chat");
-      setChats((prev) => prev.map((c, i) => i === renameTargetIndex ? { ...c, title: renameValue.trim() } : c));
+      await fetchChats();
       setShowRenameModal(false);
       setMenuOpenIndex(null);
     } catch (err) {
@@ -363,7 +338,7 @@ function App() {
     for (const chatId of selectedChats) {
       await fetch(`http://localhost:5000/chats/${chatId}`, { method: 'DELETE' });
     }
-    setChats((prev) => prev.filter((chat) => !selectedChats.includes(chat.id)));
+    await fetchChats();
     setSelectedChats([]);
     setActiveChatIndex(null);
     setMenuOpenIndex(null);
@@ -378,17 +353,7 @@ function App() {
     if (resPdfs.ok) {
       const pdfs = await resPdfs.json();
       setPdfsByChat(prev => ({ ...prev, [chatId]: pdfs }));
-      // If there are no files left in the chat, delete the chat as well
-      if (pdfs.length === 0) {
-        await fetch(`http://localhost:5000/chats/${chatId}`, { method: 'DELETE' });
-        setChats((prev) => prev.filter((chat) => chat.id !== chatId));
-        setActiveChatIndex((prev) => {
-          const idx = chats.findIndex((chat) => chat.id === chatId);
-          if (prev === idx) return null;
-          if (prev > idx) return prev - 1;
-          return prev;
-        });
-      }
+      // Do NOT delete the chat if there are no files left
     }
     setFileMenuOpenId && setFileMenuOpenId(null);
   };
@@ -406,10 +371,130 @@ function App() {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [fileMenuOpenId]);
 
+  // --- FOLDER CRUD ---
+  const handleCreateFolder = async () => {
+    try {
+      const res = await fetch("http://localhost:5000/folders", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: folderModalValue }),
+      });
+      if (!res.ok) throw new Error("Failed to create folder");
+      setShowFolderModal(false);
+      setFolderModalValue("");
+      await fetchFolders();
+    } catch (err) {
+      setError("Failed to create folder");
+    }
+  };
+
+  const handleRenameFolder = async () => {
+    try {
+      const res = await fetch(`http://localhost:5000/folders/${folderModalTargetId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: folderModalValue }),
+      });
+      if (!res.ok) throw new Error("Failed to rename folder");
+      setShowFolderModal(false);
+      setFolderModalValue("");
+      setFolderModalTargetId(null);
+      await fetchFolders();
+    } catch (err) {
+      setError("Failed to rename folder");
+    }
+  };
+
+  const handleDeleteFolder = async (folderId) => {
+    try {
+      const res = await fetch(`http://localhost:5000/folders/${folderId}`, { method: "DELETE" });
+      if (!res.ok) throw new Error("Failed to delete folder");
+      if (selectedFolderId === folderId) setSelectedFolderId(null);
+      setActiveChatIndex(null);
+      await fetchFolders();
+    } catch (err) {
+      setError("Failed to delete folder");
+    }
+  };
+
   const handleSendFollowup = async (q) => {
     setInput(q);
     await handleSend(q);
   };
+
+  // Helper to get chat IDs for a folder or uncategorized
+  const chatIdsInFolder = (folderId) => chats.filter(chat => chat.folder_id === folderId).map(chat => chat.id);
+  // Update uncategorizedChatIds to always use allChats
+  const uncategorizedChatIds = allChats.filter(chat => !chat.folder_id).map(chat => chat.id);
+
+  // Restore file upload handler
+  const handleFileChange = async (e) => {
+    const file = e.target.files[0];
+    if (!file || !activeChat) {
+      setUploadMessage(file ? "❌ Please select a chat first." : "");
+      return;
+    }
+
+    setUploadMessage("Uploading...");
+    setError("");
+
+    const formData = new FormData();
+    formData.append("file", file);
+
+    try {
+      // Upload the file
+      const res = await fetch(`http://localhost:5000/upload/${activeChat.id}`, {
+        method: "POST",
+        body: formData,
+      });
+      if (!res.ok) throw new Error("Upload failed");
+      const uploadedFile = await res.json();
+      setUploadMessage("");
+
+      // Add a file message to the chat
+      const fileMessage = {
+        role: 'file',
+        content: {
+          name: uploadedFile.filename,
+          type: file.type,
+        }
+      };
+
+      // Update chat messages in allChats
+      const updatedChats = allChats.map(chat =>
+        chat.id === activeChat.id
+          ? { ...chat, messages: [...(chat.messages || []), fileMessage] }
+          : chat
+      );
+      setAllChats(updatedChats);
+
+      // Save messages to backend
+      await saveMessages(activeChat.id, updatedChats.find(c => c.id === activeChat.id).messages);
+
+      // Refresh sidebar PDF list
+      const resPdfs = await fetch(`http://localhost:5000/chats/${activeChat.id}/pdfs`);
+      if (resPdfs.ok) {
+        const pdfs = await resPdfs.json();
+        setPdfsByChat(prev => ({ ...prev, [activeChat.id]: pdfs }));
+      }
+      // Always fetch chats after file upload to sync state
+      await fetchChats();
+    } catch (err) {
+      setUploadMessage("❌ Upload failed. Please try again.");
+    } finally {
+      e.target.value = null;
+    }
+  };
+
+  useEffect(() => {
+    // Remove any selected chat IDs that are no longer present in allChats
+    setSelectedChats(prev => prev.filter(id => allChats.some(chat => chat.id === id)));
+  }, [allChats]);
+
+  // Add this useEffect to fetch chats whenever selectedFolderId changes:
+  useEffect(() => {
+    fetchChats();
+  }, [selectedFolderId, fetchChats]);
 
   return (
     <div className="app">
@@ -418,122 +503,351 @@ function App() {
         <button onClick={handleNewChat} className="new-chat-button">
           + New Chat
         </button>
-        {selectedChats.length > 0 && (
-          <button className="delete-selected-button" onClick={handleBulkDelete}>
-            Delete Selected
+        {/* Folders section */}
+        <div style={{ margin: '20px 0 8px 0', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span>Folders</span>
+          <button onClick={() => { setShowFolderModal(true); setFolderModalType('create'); setFolderModalValue(''); }} style={{ background: 'none', border: 'none', cursor: 'pointer' }} title="Add Folder">
+            <FontAwesomeIcon icon={faPlus} />
           </button>
+        </div>
+        {/* Inline create folder input under Folders section */}
+        {showFolderModal && folderModalType === 'create' && (
+          <div style={{ margin: '0 0 1rem 0', padding: '1rem', background: '#fff', borderRadius: 12, boxShadow: '0 2px 12px 0 rgba(30,41,59,0.08)', display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <span style={{ fontWeight: 600, fontSize: '1.08em', marginBottom: 4 }}>Create Folder</span>
+            <input
+              type="text"
+              value={folderModalValue}
+              onChange={e => setFolderModalValue(e.target.value)}
+              style={{ width: '100%', marginBottom: 8, padding: 8, borderRadius: 6, border: '1px solid #e5e7eb', fontSize: '1em' }}
+              autoFocus
+            />
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+              <button onClick={() => setShowFolderModal(false)} style={{ padding: '6px 16px', borderRadius: 6, border: '1px solid #d1d5db', background: '#f3f4f6', color: '#374151', fontWeight: 500 }}>Cancel</button>
+              <button
+                onClick={handleCreateFolder}
+                style={{ background: '#2563eb', color: '#fff', border: 'none', padding: '6px 18px', borderRadius: 6, fontWeight: 600 }}
+              >
+                Create
+              </button>
+            </div>
+          </div>
         )}
-        {showBulkDeleteModal && (
-          <div className="modal-overlay" style={{ zIndex: 200 }}>
+        {/* Sidebar: Folders/Projects and their chats */}
+        <div className="folder-list">
+          {folders.map(folder => {
+            const folderChatIds = chatIdsInFolder(folder.id);
+            const allSelected = folderChatIds.length > 0 && folderChatIds.every(id => selectedChats.includes(id));
+            return (
+              <div key={folder.id} className="folder-item">
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <button onClick={() => setFolderCollapse(f => ({ ...f, [folder.id]: !f[folder.id] }))} style={{ background: 'none', border: 'none', cursor: 'pointer' }}>
+                    <FontAwesomeIcon icon={folderCollapse[folder.id] ? faChevronRight : faChevronDown} />
+                  </button>
+                  <span
+                    className={selectedFolderId === folder.id ? 'chat-title active' : 'chat-title'}
+                    style={{ cursor: 'pointer' }}
+                    onClick={() => {
+                      setSelectedFolderId(folder.id);
+                      setActiveChatIndex(null); // Reset selection when switching folders
+                      setFollowups([]);
+                      fetchChats(); // Ensure chat list is always up-to-date after folder switch
+                    }}
+                  >
+                    <FontAwesomeIcon icon={faFolder} style={{ marginRight: 4 }} />
+                    {folder.name}
+                  </span>
+                  {/* Add chat to folder */}
+                  <button onClick={async (e) => {
+                    e.stopPropagation();
+                    try {
+                      const res = await fetch("http://localhost:5000/chats", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ title: "Untitled", folder_id: folder.id }),
+                      });
+                      const data = await res.json();
+                      if (!res.ok) throw new Error("Failed to create chat: " + (data?.error || res.status));
+                      await fetchChats(); // Always fetch all chats so uncategorized chats are visible
+                      setSelectedFolderId(folder.id);
+                      setFolderCollapse(f => ({ ...f, [folder.id]: false })); // Ensure folder is expanded after adding chat
+                      setInput("");
+                      setFollowups([]);
+                    } catch (err) {
+                      setError("Failed to create new chat: " + (err.message || err));
+                    }
+                  }} style={{ background: 'none', border: 'none', cursor: 'pointer' }} title="Add Chat to Folder">
+                    <FontAwesomeIcon icon={faPlus} />
+                  </button>
+                  <button onClick={() => { setShowFolderModal(true); setFolderModalType('rename'); setFolderModalValue(folder.name); setFolderModalTargetId(folder.id); }} style={{ background: 'none', border: 'none', cursor: 'pointer' }} title="Rename Folder">
+                    <FontAwesomeIcon icon={faEdit} />
+                  </button>
+                  <button onClick={() => { setShowDeleteFolderModal(true); setDeleteFolderTargetId(folder.id); }} style={{ background: 'none', border: 'none', cursor: 'pointer' }} title="Delete Folder">
+                    <FontAwesomeIcon icon={faTrashAlt} />
+                  </button>
+                </div>
+                {/* Always show all chats for this folder when expanded */}
+                {!folderCollapse[folder.id] && (
+                  <div className="chat-list" style={{ marginLeft: 24 }}>
+                    {/* Always show Select All for this folder if there are chats in the folder */}
+                    {folderChatIds.length > 0 && (
+                      <div style={{ display: 'flex', alignItems: 'center', marginBottom: 4 }}>
+                        <input
+                          type="checkbox"
+                          checked={allSelected}
+                          onChange={e => {
+                            if (e.target.checked) {
+                              setSelectedChats(prev => Array.from(new Set([...prev, ...folderChatIds])));
+                            } else {
+                              setSelectedChats(prev => prev.filter(id => !folderChatIds.includes(id)));
+                            }
+                          }}
+                          style={{ marginRight: 8 }}
+                        />
+                        <span style={{ fontSize: '0.95em' }}>Select All</span>
+                        {selectedChats.some(id => folderChatIds.includes(id)) && (
+                          <button
+                            onClick={handleBulkDelete}
+                            className="delete-selected-button"
+                            style={{ marginLeft: 12, padding: '2px 10px', fontSize: '0.9em', height: 28 }}
+                          >
+                            Delete Selected
+                          </button>
+                        )}
+                      </div>
+                    )}
+                    {allChats.filter(chat => chat.folder_id === folder.id).map((chat, index) => (
+                      <div
+                        key={chat.id || index}
+                        className={`chat-history-item ${chat.id === (activeChat && activeChat.id) ? "active" : ""}`}
+                        onClick={() => {
+                          setSelectedFolderId(folder.id);
+                          setPendingActivateChatId(chat.id);
+                          setFollowups([]);
+                        }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', width: '100%' }}>
+                          <input
+                            type="checkbox"
+                            className="chat-checkbox"
+                            checked={selectedChats.includes(chat.id)}
+                            onChange={(e) => {
+                              e.stopPropagation();
+                              handleChatCheckbox(chat.id);
+                            }}
+                            style={{ marginRight: '8px' }}
+                          />
+                          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', width: '100%' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', width: '100%' }}>
+                              <span className="chat-title" style={{ fontWeight: 600, fontSize: '1em', marginBottom: 2, flex: 1 }}>
+                                {chat.title && chat.title.trim() ? chat.title : 'Untitled'}
+                              </span>
+                              {/* Rename chat */}
+                              <button
+                                onClick={e => {
+                                  e.stopPropagation();
+                                  setShowRenameModal(true);
+                                  setRenameValue(chat.title);
+                                  setRenameTargetId(chat.id);
+                                }}
+                                style={{ background: 'none', border: 'none', cursor: 'pointer', marginLeft: 4 }}
+                                title="Rename Chat"
+                              >
+                                <FontAwesomeIcon icon={faEdit} />
+                              </button>
+                              {/* Delete chat */}
+                              <button
+                                onClick={e => {
+                                  e.stopPropagation();
+                                  setShowDeleteModal(true);
+                                  setDeleteTargetId(chat.id);
+                                }}
+                                style={{ background: 'none', border: 'none', cursor: 'pointer', marginLeft: 4 }}
+                                title="Delete Chat"
+                              >
+                                <FontAwesomeIcon icon={faTrashAlt} />
+                              </button>
+                            </div>
+                            {pdfsByChat[chat.id] && pdfsByChat[chat.id].length > 0 && (
+                              <ul style={{ listStyle: 'disc', paddingLeft: 18, margin: '4px 0 0 0', fontSize: '0.97em', color: '#222', width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                                {pdfsByChat[chat.id].map(file => (
+                                  <li key={file.id} style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginBottom: 2, position: 'relative', width: 'fit-content', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                    <span style={{ display: 'inline-flex', alignItems: 'center', width: '100%' }}>
+                                      <a
+                                        href={`http://localhost:5000/files/${file.id}`}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="sidebar-file-link"
+                                        title={file.originalname || file.filename}
+                                        style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', textAlign: 'center' }}
+                                      >
+                                        {file.originalname || file.filename}
+                                      </a>
+                                      <button
+                                        onClick={e => {
+                                          e.stopPropagation();
+                                          handleDeleteFile(file.id, chat.id);
+                                        }}
+                                        className="file-trash-btn"
+                                        title="Delete file"
+                                      >
+                                        <FontAwesomeIcon icon={faTrashAlt} />
+                                      </button>
+                                    </span>
+                                  </li>
+                                ))}
+                              </ul>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+        {/* Sidebar: Uncategorized chats */}
+        <div style={{ margin: '20px 0 8px 0', fontWeight: 600 }}>Chats</div>
+        <div className="chat-list">
+          {/* Always show Select All for uncategorized if there are any chats */}
+          {uncategorizedChatIds.length > 0 && (
+            <div style={{ display: 'flex', alignItems: 'center', marginBottom: 4 }}>
+              <input
+                type="checkbox"
+                checked={uncategorizedChatIds.length > 0 && uncategorizedChatIds.every(id => selectedChats.includes(id))}
+                onChange={e => {
+                  if (e.target.checked) {
+                    setSelectedChats(prev => Array.from(new Set([...prev, ...uncategorizedChatIds])));
+                  } else {
+                    setSelectedChats(prev => prev.filter(id => !uncategorizedChatIds.includes(id)));
+                  }
+                }}
+                style={{ marginRight: 8 }}
+              />
+              <span style={{ fontSize: '0.95em' }}>Select All</span>
+              {selectedChats.some(id => uncategorizedChatIds.includes(id)) && (
+                <button
+                  onClick={handleBulkDelete}
+                  className="delete-selected-button"
+                  style={{ marginLeft: 12, padding: '2px 10px', fontSize: '0.9em', height: 28 }}
+                >
+                  Delete Selected
+                </button>
+              )}
+            </div>
+          )}
+          {allChats.filter(chat => !chat.folder_id).map((chat, index) => (
+            <div
+              key={chat.id || index}
+              className={`chat-history-item ${chat.id === (activeChat && activeChat.id) ? "active" : ""}`}
+              onClick={() => {
+                setSelectedFolderId(null);
+                setPendingActivateChatId(chat.id);
+                setFollowups([]);
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', width: '100%' }}>
+                <input
+                  type="checkbox"
+                  className="chat-checkbox"
+                  checked={selectedChats.includes(chat.id)}
+                  onChange={(e) => {
+                    e.stopPropagation();
+                    handleChatCheckbox(chat.id);
+                  }}
+                  style={{ marginRight: '8px' }}
+                />
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', width: '100%' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', width: '100%' }}>
+                    <span className="chat-title" style={{ fontWeight: 600, fontSize: '1em', marginBottom: 2, flex: 1 }}>
+                      {chat.title && chat.title.trim() ? chat.title : 'Untitled'}
+                    </span>
+                    {/* Rename chat */}
+                    <button
+                      onClick={e => {
+                        e.stopPropagation();
+                        setShowRenameModal(true);
+                        setRenameValue(chat.title);
+                        setRenameTargetId(chat.id);
+                      }}
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', marginLeft: 4 }}
+                      title="Rename Chat"
+                    >
+                      <FontAwesomeIcon icon={faEdit} />
+                    </button>
+                    {/* Delete chat */}
+                    <button
+                      onClick={e => {
+                        e.stopPropagation();
+                        setShowDeleteModal(true);
+                        setDeleteTargetId(chat.id);
+                      }}
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', marginLeft: 4 }}
+                      title="Delete Chat"
+                    >
+                      <FontAwesomeIcon icon={faTrashAlt} />
+                    </button>
+                  </div>
+                  {pdfsByChat[chat.id] && pdfsByChat[chat.id].length > 0 && (
+                    <ul style={{ listStyle: 'disc', paddingLeft: 18, margin: '4px 0 0 0', fontSize: '0.97em', color: '#222', width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                      {pdfsByChat[chat.id].map(file => (
+                        <li key={file.id} style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginBottom: 2, position: 'relative', width: 'fit-content', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                          <span style={{ display: 'inline-flex', alignItems: 'center', width: '100%' }}>
+                            <a
+                              href={`http://localhost:5000/files/${file.id}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="sidebar-file-link"
+                              title={file.originalname || file.filename}
+                              style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', textAlign: 'center' }}
+                            >
+                              {file.originalname || file.filename}
+                            </a>
+                            <button
+                              onClick={e => {
+                                e.stopPropagation();
+                                handleDeleteFile(file.id, chat.id);
+                              }}
+                              className="file-trash-btn"
+                              title="Delete file"
+                            >
+                              <FontAwesomeIcon icon={faTrashAlt} />
+                            </button>
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+        {/* Folder modal for create/rename */}
+        {showFolderModal && folderModalType === 'rename' && (
+          <div className="modal-overlay" style={{ zIndex: 300 }}>
             <div className="modal-content">
-              <h3>Confirm Delete</h3>
-              <p>Are you sure you want to delete the selected chats?</p>
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-                <button onClick={() => setShowBulkDeleteModal(false)}>Cancel</button>
-                <button onClick={confirmBulkDelete} style={{ background: '#b91c1c', color: '#fff', border: 'none', padding: '8px 16px', borderRadius: 4 }}>Delete</button>
+              <h3>Rename Folder</h3>
+              <input
+                type="text"
+                value={folderModalValue}
+                onChange={e => setFolderModalValue(e.target.value)}
+                style={{ width: "100%", marginBottom: 16, padding: 8 }}
+                autoFocus
+              />
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+                <button onClick={() => setShowFolderModal(false)}>Cancel</button>
+                <button
+                  onClick={handleRenameFolder}
+                  style={{ background: "#4f46e5", color: "#fff", border: "none", padding: "8px 16px", borderRadius: 4 }}
+                >
+                  Rename
+                </button>
               </div>
             </div>
           </div>
         )}
-        <div className="chat-list">
-          {chatsLoading ? (
-            <div style={{ textAlign: "center", margin: "1rem 0" }}>Loading chats...</div>
-          ) : error ? (
-            <div style={{ color: "red", textAlign: "center" }}>{error}</div>
-          ) : (
-            chats.map((chat, index) => (
-              <div
-                key={chat.id || index}
-                className={`chat-history-item ${index === activeChatIndex ? "active" : ""}`}
-                onClick={() => {
-                  setActiveChatIndex(index);
-                  setFollowups([]);
-                }}
-              >
-                <div className="chat-item-header">
-                  <input
-                    type="checkbox"
-                    checked={selectedChats.includes(chat.id)}
-                    onChange={(e) => {
-                      e.stopPropagation();
-                      handleChatCheckbox(chat.id);
-                    }}
-                    onClick={(e) => e.stopPropagation()}
-                    className="chat-checkbox"
-                  />
-                  <span className="chat-title">{chat.title}</span>
-                  <button
-                    className="chat-title-menu-trigger"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setMenuOpenIndex(menuOpenIndex === index ? null : index);
-                    }}
-                    title="Chat options"
-                  >
-                    &#8943;
-                  </button>
-                </div>
-                <div style={{ height: '0.25rem' }} />
-                
-                {menuOpenIndex === index && (
-                  <div className="chat-menu" ref={menuRef}>
-                    <div
-                      className="chat-menu-item"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setShowRenameModal(true);
-                        setRenameValue(chat.title);
-                        setRenameTargetIndex(index);
-                        setMenuOpenIndex(null);
-                      }}
-                    >
-                      <span role="img" aria-label="Rename">✏️</span> Rename
-                    </div>
-                    <div
-                      className="chat-menu-item delete"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setShowDeleteModal(true);
-                        setDeleteTargetIndex(index);
-                        setMenuOpenIndex(null);
-                      }}
-                    >
-                      <span role="img" aria-label="Delete">🗑️</span> Delete
-                    </div>
-                  </div>
-                )}
-
-                
-                {pdfsByChat[chat.id] && pdfsByChat[chat.id].length > 0 && (
-                  <ul className="sidebar-pdf-list">
-                    {pdfsByChat[chat.id].map(pdf => (
-                      <li key={pdf.id} className="sidebar-pdf-row" style={{ position: 'relative' }}>
-                        <a
-                          href={`http://localhost:5000/uploads/${encodeURIComponent(pdf.filepath.split(/[/\\]/).pop())}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="sidebar-pdf-link"
-                        >
-                          {pdf.filename}
-                        </a>
-                        <button
-                          className="file-trash-btn"
-                          onClick={e => {
-                            e.stopPropagation();
-                            handleDeleteFile(pdf.id, chat.id);
-                          }}
-                          title="Delete file"
-                        >
-                          <FontAwesomeIcon icon={faTrash} />
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-            ))
-          )}
-        </div>
         <div className="dark-toggle-container">
           <label className="switch">
             <input type="checkbox" checked={darkMode} onChange={toggleDarkMode} />
@@ -638,6 +952,7 @@ function App() {
               No messages yet.
             </div>
           )}
+
           {followups.length > 0 && (
             <div style={{ marginTop: 24 }}>
               <div style={{ fontWeight: 500, marginBottom: 8 }}>AI Follow-up Suggestions:</div>
@@ -703,7 +1018,15 @@ function App() {
       
       {showRenameModal && (
         <div className="modal-overlay" style={{ position: "fixed", top: 0, left: 0, width: "100vw", height: "100vh", background: "rgba(0,0,0,0.2)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100 }}>
-          <div className="modal-content" style={{ background: "#fff", padding: 24, borderRadius: 8, minWidth: 300 }}>
+          <div
+            className="modal-content"
+            style={{ background: "#fff", padding: 24, borderRadius: 8, minWidth: 300 }}
+            tabIndex={0}
+            onKeyDown={e => {
+              if (e.key === "Enter") handleRenameChat();
+              if (e.key === "Escape") setShowRenameModal(false);
+            }}
+          >
             <h3>Rename Chat</h3>
             <input
               type="text"
@@ -722,12 +1045,45 @@ function App() {
       
       {showDeleteModal && (
         <div className="modal-overlay" style={{ position: "fixed", top: 0, left: 0, width: "100vw", height: "100vh", background: "rgba(0,0,0,0.2)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100 }}>
-          <div className="modal-content" style={{ background: "#fff", padding: 24, borderRadius: 8, minWidth: 300 }}>
+          <div
+            className="modal-content"
+            style={{ background: "#fff", padding: 24, borderRadius: 8, minWidth: 300 }}
+            tabIndex={0}
+            onKeyDown={e => {
+              if (e.key === "Enter") handleDeleteChat();
+              if (e.key === "Escape") setShowDeleteModal(false);
+            }}
+          >
             <h3>Delete Chat</h3>
             <p>Are you sure you want to delete this chat?</p>
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
               <button onClick={() => setShowDeleteModal(false)}>Cancel</button>
-              <button onClick={() => { handleDeleteChat(deleteTargetIndex); }} style={{ background: "#d00", color: "#fff", border: "none", padding: "8px 16px", borderRadius: 4 }}>Delete</button>
+              <button onClick={handleDeleteChat} style={{ background: "#d00", color: "#fff", border: "none", padding: "8px 16px", borderRadius: 4 }}>Delete</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {showBulkDeleteModal && (
+        <div className="modal-overlay" style={{ position: "fixed", top: 0, left: 0, width: "100vw", height: "100vh", background: "rgba(0,0,0,0.2)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100 }}>
+          <div
+            className="modal-content"
+            style={{ background: "#fff", padding: 24, borderRadius: 8, minWidth: 300 }}
+            tabIndex={0}
+            onKeyDown={e => {
+              if (e.key === "Enter") confirmBulkDelete();
+              if (e.key === "Escape") setShowBulkDeleteModal(false);
+            }}
+          >
+            <h3>Bulk Delete Chats</h3>
+            <p>Are you sure you want to delete {selectedChats.length} selected chats?</p>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+              <button onClick={() => setShowBulkDeleteModal(false)}>Cancel</button>
+              <button
+                onClick={confirmBulkDelete}
+                style={{ background: "#ef4444", color: "#fff", border: "none", padding: "8px 16px", borderRadius: 4 }}
+              >
+                Delete
+              </button>
             </div>
           </div>
         </div>
@@ -777,6 +1133,26 @@ function App() {
               </button>
             </div>
             {apiKeyStatus && <div style={{ marginTop: 12, color: apiKeyStatus.includes("Failed") ? "#ef4444" : "#22c55e" }}>{apiKeyStatus}</div>}
+          </div>
+        </div>
+      )}
+      {showDeleteFolderModal && (
+        <div className="modal-overlay" style={{ position: "fixed", top: 0, left: 0, width: "100vw", height: "100vh", background: "rgba(0,0,0,0.2)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100 }}>
+          <div
+            className="modal-content"
+            style={{ background: "#fff", padding: 24, borderRadius: 8, minWidth: 300 }}
+            tabIndex={0}
+            onKeyDown={e => {
+              if (e.key === "Enter") handleDeleteFolder(deleteFolderTargetId);
+              if (e.key === "Escape") setShowDeleteFolderModal(false);
+            }}
+          >
+            <h3>Delete Folder</h3>
+            <p>Are you sure you want to delete this folder?</p>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+              <button onClick={() => setShowDeleteFolderModal(false)}>Cancel</button>
+              <button onClick={() => { handleDeleteFolder(deleteFolderTargetId); setShowDeleteFolderModal(false); }} style={{ background: "#d00", color: "#fff", border: "none", padding: "8px 16px", borderRadius: 4 }}>Delete</button>
+            </div>
           </div>
         </div>
       )}

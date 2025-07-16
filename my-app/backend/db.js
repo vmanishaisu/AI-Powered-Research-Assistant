@@ -15,6 +15,38 @@ db.serialize(() => {
     )
   `);
 
+  // Create the folders table
+  db.run(`
+    CREATE TABLE IF NOT EXISTS folders (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL
+    )
+  `);
+
+  // Add folder_id to chats if it doesn't exist
+  db.all(`PRAGMA table_info(chats)`, (err, columns) => {
+    if (err) {
+      console.error("Failed to check chats columns:", err);
+      return;
+    }
+    const hasFolderId = Array.isArray(columns) && columns.some(col => col.name === 'folder_id');
+    if (!hasFolderId) {
+      db.run(`ALTER TABLE chats ADD COLUMN folder_id INTEGER REFERENCES folders(id)`, (err2) => {
+        if (err2) {
+          if (err2.message && err2.message.includes('duplicate column name')) {
+            console.log("folder_id column already exists in chats table.");
+          } else {
+            console.error("Error adding folder_id column:", err2);
+          }
+        } else {
+          console.log("Added folder_id column to chats table.");
+        }
+      });
+    } else {
+      console.log("folder_id column already exists in chats table.");
+    }
+  });
+
   // Check if the pdfs table already exists
   db.get(`SELECT name FROM sqlite_master WHERE type='table' AND name='pdfs'`, (err, row) => {
     if (err) {
